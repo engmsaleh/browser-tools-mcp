@@ -1,0 +1,27 @@
+{
+  "name": "BrowserTools MCP",
+  "version": "1.0.0",
+  "description": "MCP tool for AI code editors to capture data from a browser such as console logs, network requests, screenshots and more",
+  "manifest_version": 2,
+  "devtools_page": "devtools.html",
+  "permissions": [
+    "activeTab",
+    "debugger",
+    "storage",
+    "tabs",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browsertools-mcp@agentdesk.ai",
+      "strict_min_version": "79.0"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.svg",
+    "96": "icons/icon-96.svg"
+  }
+} 
