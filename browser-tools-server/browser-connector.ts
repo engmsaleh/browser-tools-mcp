@@ -657,8 +657,9 @@ export class BrowserConnector {
     );
 
     this.wss.on("connection", (ws: WebSocket) => {
-      console.log("Chrome extension connected via WebSocket");
+      console.log("Extension connected via WebSocket");
       this.activeConnection = ws;
+      let connectedExtensionType = "unknown";
 
       ws.on("message", (message: string | Buffer | ArrayBuffer | Buffer[]) => {
         try {
@@ -696,7 +697,7 @@ export class BrowserConnector {
           // Handle page navigation event via WebSocket
           // Note: This is intentionally duplicated from the HTTP handler in /extension-log
           // as the extension may send navigation events through either channel
-          if (data.type === "page-navigated" && data.url) {
+          else if (data.type === "page-navigated" && data.url) {
             console.log("Page navigated to:", data.url);
             currentUrl = data.url;
 
@@ -710,7 +711,7 @@ export class BrowserConnector {
             }
           }
           // Handle screenshot response
-          if (data.type === "screenshot-data" && data.data) {
+          else if (data.type === "screenshot-data" && data.data) {
             console.log("Received screenshot data");
             console.log("Screenshot path from extension:", data.path);
             console.log("Auto-paste setting from extension:", data.autoPaste);
@@ -741,8 +742,66 @@ export class BrowserConnector {
               );
               screenshotCallbacks.clear(); // Clear all callbacks
             }
-          } else {
-            console.log("Unhandled message type:", data.type);
+          }
+          // Handle connection confirmation from extension
+          else if (data.type === "extension_connected") {
+            connectedExtensionType = data.extension || "unknown";
+            const version = data.version || "unknown";
+            console.log(`Confirmed connection from ${connectedExtensionType} (version ${version})`);
+            // Maybe update status or perform other actions now that connection is confirmed
+          }
+          // Handle ping from extension
+          else if (data.type === "ping") {
+            console.log(`Received ping from ${connectedExtensionType}, sending pong`);
+            try {
+              ws.send(JSON.stringify({ type: "pong" }));
+            } catch (sendError) {
+              console.error(`Failed to send pong to ${connectedExtensionType}:`, sendError);
+            }
+          }
+          // Handle URL updates sent via WebSocket (potentially redundant with POST /current-url)
+          else if (data.type === "url_update" && data.url) {
+            console.log(`Received WebSocket URL update: ${data.url} (Tab: ${data.tabId})`);
+            currentUrl = data.url;
+            if (data.tabId) {
+              currentTabId = data.tabId;
+            }
+          }
+          // Handle Network Requests sent via WebSocket (HAR-based format from panel.js)
+          else if (data.type === "network-request" && data.data) {
+            const networkData = data.data;
+            const logEntry = {
+              url: networkData.url,
+              method: networkData.method,
+              status: networkData.status,
+              timestamp: networkData.timestamp,
+            };
+            console.log("Adding network request (from WebSocket):", logEntry);
+
+            // Store the full details (potentially including headers/body based on panel formatting)
+            const fullLog = { ...networkData, type: "network-request" }; // Ensure type field is set
+
+            // Route network requests based on status code
+            if (networkData.status >= 400) {
+              networkErrors.push(fullLog);
+              if (networkErrors.length > currentSettings.logLimit) {
+                console.log(
+                  `Network errors exceeded limit (${currentSettings.logLimit}), removing oldest entry`
+                );
+                networkErrors.shift();
+              }
+            } else {
+              networkSuccess.push(fullLog);
+              if (networkSuccess.length > currentSettings.logLimit) {
+                console.log(
+                  `Network success logs exceeded limit (${currentSettings.logLimit}), removing oldest entry`
+                );
+                networkSuccess.shift();
+              }
+            }
+          }
+          else {
+            console.log(`Unhandled message type '${data.type}' from ${connectedExtensionType}`);
           }
         } catch (error) {
           console.error("Error processing WebSocket message:", error);
@@ -750,7 +809,7 @@ export class BrowserConnector {
       });
 
       ws.on("close", () => {
-        console.log("Chrome extension disconnected");
+        console.log(`${connectedExtensionType} extension disconnected`);
         if (this.activeConnection === ws) {
           this.activeConnection = null;
         }

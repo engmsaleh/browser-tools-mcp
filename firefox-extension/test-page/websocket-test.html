@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrowserTools WebSocket Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 { color: #333; }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 20px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 10px 5px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    #log {
+      background-color: #f5f5f5;
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .server-test {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+    }
+    .server-test input {
+      padding: 8px;
+      margin-right: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .success { color: green; }
+    .error { color: red; }
+    .info { color: blue; }
+  </style>
+</head>
+<body>
+  <h1>BrowserTools WebSocket Test</h1>
+  
+  <div class="server-test">
+    <h2>WebSocket Connection Test</h2>
+    <div>
+      <label for="ws-host">Host:</label>
+      <input type="text" id="ws-host" value="localhost">
+      
+      <label for="ws-port">Port:</label>
+      <input type="text" id="ws-port" value="3025">
+      
+      <button id="connect-ws">Connect WebSocket</button>
+      <button id="disconnect-ws" disabled>Disconnect</button>
+    </div>
+    
+    <div style="margin-top: 10px;">
+      <label for="message-input">Message:</label>
+      <input type="text" id="message-input" style="width: 300px;" value='{"type":"HELLO","client":"test-page"}'>
+      <button id="send-message" disabled>Send Message</button>
+    </div>
+    
+    <div style="margin-top: 10px;">
+      <button id="request-logs" disabled>Request Console Logs</button>
+      <button id="request-network" disabled>Request Network Logs</button>
+      <button id="clear-logs">Clear Log</button>
+    </div>
+  </div>
+  
+  <h2>Connection Log</h2>
+  <div id="log"></div>
+  
+  <script>
+    // Elements
+    const wsHost = document.getElementById('ws-host');
+    const wsPort = document.getElementById('ws-port');
+    const connectBtn = document.getElementById('connect-ws');
+    const disconnectBtn = document.getElementById('disconnect-ws');
+    const messageInput = document.getElementById('message-input');
+    const sendMessageBtn = document.getElementById('send-message');
+    const requestLogsBtn = document.getElementById('request-logs');
+    const requestNetworkBtn = document.getElementById('request-network');
+    const clearLogsBtn = document.getElementById('clear-logs');
+    const logElement = document.getElementById('log');
+    
+    // WebSocket connection
+    let socket = null;
+    
+    // Log messages
+    function log(message, type = 'info') {
+      const timestamp = new Date().toISOString();
+      const entry = document.createElement('div');
+      entry.className = type;
+      entry.textContent = `[${timestamp}] ${message}`;
+      logElement.appendChild(entry);
+      logElement.scrollTop = logElement.scrollHeight;
+      console.log(`[${type}] ${message}`);
+    }
+    
+    // Clear logs
+    function clearLogs() {
+      logElement.innerHTML = '';
+    }
+    
+    // Connect WebSocket
+    function connectWebSocket() {
+      if (socket) {
+        log('Already connected. Disconnect first.', 'error');
+        return;
+      }
+      
+      const host = wsHost.value;
+      const port = wsPort.value;
+      
+      // First validate server HTTP connection
+      log(`Testing HTTP connection to http://${host}:${port}/.identity...`);
+      
+      fetch(`http://${host}:${port}/.identity`, {
+        headers: { 'Accept': 'application/json' }
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server HTTP check failed: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(identity => {
+        log(`Server identity check successful: ${JSON.stringify(identity)}`, 'success');
+        
+        // Only attempt WebSocket connection if server validation works
+        if (identity.signature === "mcp-browser-connector-24x7") {
+          // Connect to the proper WebSocket path based on server code
+          tryWebSocketConnection(`ws://${host}:${port}/extension-ws`, (error) => {
+            if (error) {
+              log(`Failed to connect to primary WebSocket path, error: ${error}`, 'error');
+              // Try fallback paths
+              tryWebSocketConnection(`ws://${host}:${port}/extension`, (error) => {
+                if (error) {
+                  tryWebSocketConnection(`ws://${host}:${port}`, null);
+                }
+              });
+            }
+          });
+        } else {
+          throw new Error(`Invalid server signature: ${identity.signature}`);
+        }
+      })
+      .catch(error => {
+        log(`Server validation error: ${error.message}`, 'error');
+      });
+    }
+    
+    // Try WebSocket connection with fallback support
+    function tryWebSocketConnection(url, fallbackFn) {
+      log(`Attempting WebSocket connection to ${url}...`);
+      
+      try {
+        socket = new WebSocket(url);
+        
+        // Set timeout for connection
+        const connectionTimeout = setTimeout(() => {
+          if (socket && socket.readyState !== WebSocket.OPEN) {
+            log(`WebSocket connection timeout to ${url}`, 'error');
+            socket.close();
+            if (fallbackFn) fallbackFn();
+          }
+        }, 5000);
+        
+        socket.onopen = function(event) {
+          clearTimeout(connectionTimeout);
+          log(`WebSocket connection established to ${url}`, 'success');
+          connectBtn.disabled = true;
+          disconnectBtn.disabled = false;
+          sendMessageBtn.disabled = false;
+          requestLogsBtn.disabled = false;
+          requestNetworkBtn.disabled = false;
+          
+          // Send initial hello message
+          setTimeout(() => {
+            sendMessage('{"type":"HELLO","client":"websocket-test-page"}');
+          }, 500);
+        };
+        
+        socket.onclose = function(event) {
+          clearTimeout(connectionTimeout);
+          log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`, event.wasClean ? 'info' : 'error');
+          log(`WebSocket connection close details: Clean=${event.wasClean}, Code=${event.code}`, 'info');
+          resetConnectionUI();
+          
+          if (fallbackFn && event.code === 1006) {
+            log('Attempting fallback connection...', 'info');
+            setTimeout(fallbackFn, 1000);
+          }
+        };
+        
+        socket.onerror = function(error) {
+          log(`WebSocket error: ${error.message || 'Unknown error'}`, 'error');
+          log(`WebSocket detailed error: ${JSON.stringify(error)}`, 'error');
+          // Don't reset UI here, let onclose handle it
+        };
+        
+        socket.onmessage = function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            log(`Received message: ${JSON.stringify(data, null, 2)}`, 'info');
+          } catch (e) {
+            log(`Received raw message: ${event.data}`, 'info');
+          }
+        };
+      } catch (error) {
+        log(`Error creating WebSocket: ${error.message}`, 'error');
+        if (fallbackFn) {
+          log('Attempting fallback connection...', 'info');
+          setTimeout(fallbackFn, 1000);
+        }
+      }
+    }
+    
+    // Disconnect WebSocket
+    function disconnectWebSocket() {
+      if (!socket) {
+        log('Not connected.', 'error');
+        return;
+      }
+      
+      log('Closing WebSocket connection...');
+      socket.close();
+      resetConnectionUI();
+    }
+    
+    // Reset UI after disconnection
+    function resetConnectionUI() {
+      socket = null;
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      sendMessageBtn.disabled = true;
+      requestLogsBtn.disabled = true;
+      requestNetworkBtn.disabled = true;
+    }
+    
+    // Send message
+    function sendMessage(messageText) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        log('Not connected to WebSocket. Cannot send message.', 'error');
+        return;
+      }
+      
+      try {
+        const message = messageText || messageInput.value;
+        log(`Sending message: ${message}`);
+        socket.send(message);
+      } catch (error) {
+        log(`Error sending message: ${error.message}`, 'error');
+      }
+    }
+    
+    // Request console logs
+    function requestConsoleLogs() {
+      sendMessage('{"type":"GET_CONSOLE_LOGS"}');
+    }
+    
+    // Request network logs
+    function requestNetworkLogs() {
+      sendMessage('{"type":"GET_NETWORK_LOGS"}');
+    }
+    
+    // Event listeners
+    connectBtn.addEventListener('click', connectWebSocket);
+    disconnectBtn.addEventListener('click', disconnectWebSocket);
+    sendMessageBtn.addEventListener('click', () => sendMessage());
+    requestLogsBtn.addEventListener('click', requestConsoleLogs);
+    requestNetworkBtn.addEventListener('click', requestNetworkLogs);
+    clearLogsBtn.addEventListener('click', clearLogs);
+    
+    // Initial log
+    log('WebSocket test page initialized. Click "Connect WebSocket" to start.', 'info');
+  </script>
+</body>
+</html> 

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrowserTools Log Inspector</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 { color: #333; }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 20px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 10px 5px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    #log-display {
+      background-color: #f5f5f5;
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      height: 500px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .log-entry {
+      margin-bottom: 5px;
+      padding: 5px;
+      border-bottom: 1px solid #eee;
+    }
+    .log-entry.error {
+      color: #d9534f;
+      background-color: #f9e5e5;
+    }
+    .log-entry.warn {
+      color: #f0ad4e;
+      background-color: #fef8e9;
+    }
+    .log-entry.info {
+      color: #5bc0de;
+      background-color: #e9f6fb;
+    }
+    .controls {
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .filter {
+      margin-right: 20px;
+    }
+    .filter label {
+      margin-right: 5px;
+    }
+    .server-test {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+    }
+    .server-test input {
+      padding: 8px;
+      margin-right: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>BrowserTools Log Inspector</h1>
+  
+  <div class="controls">
+    <div class="filter">
+      <label for="filter-text">Filter:</label>
+      <input type="text" id="filter-text" placeholder="Filter logs...">
+    </div>
+    
+    <div class="filter">
+      <input type="checkbox" id="show-errors" checked>
+      <label for="show-errors">Errors</label>
+      
+      <input type="checkbox" id="show-warnings" checked>
+      <label for="show-warnings">Warnings</label>
+      
+      <input type="checkbox" id="show-info" checked>
+      <label for="show-info">Info</label>
+    </div>
+    
+    <button id="clear-logs">Clear Logs</button>
+    <button id="copy-logs">Copy Logs</button>
+  </div>
+  
+  <div id="log-display"></div>
+  
+  <div class="server-test">
+    <h2>Server Connection Test</h2>
+    <div>
+      <label for="server-host">Host:</label>
+      <input type="text" id="server-host" value="localhost">
+      
+      <label for="server-port">Port:</label>
+      <input type="text" id="server-port" value="3025">
+      
+      <button id="test-connection">Test Connection</button>
+    </div>
+    <div id="test-result" style="margin-top: 10px;"></div>
+  </div>
+  
+  <script>
+    // Elements
+    const logDisplay = document.getElementById('log-display');
+    const filterText = document.getElementById('filter-text');
+    const showErrors = document.getElementById('show-errors');
+    const showWarnings = document.getElementById('show-warnings');
+    const showInfo = document.getElementById('show-info');
+    const clearLogsBtn = document.getElementById('clear-logs');
+    const copyLogsBtn = document.getElementById('copy-logs');
+    const testConnectionBtn = document.getElementById('test-connection');
+    const serverHost = document.getElementById('server-host');
+    const serverPort = document.getElementById('server-port');
+    const testResult = document.getElementById('test-result');
+    
+    // Store logs
+    let logs = [];
+    
+    // Override console methods for capturing
+    const originalConsole = {
+      log: console.log,
+      warn: console.warn,
+      error: console.error,
+      info: console.info
+    };
+    
+    console.log = function() {
+      // Call original
+      originalConsole.log.apply(console, arguments);
+      
+      // Add to our logs
+      addLogEntry('log', Array.from(arguments));
+    };
+    
+    console.warn = function() {
+      // Call original
+      originalConsole.warn.apply(console, arguments);
+      
+      // Add to our logs
+      addLogEntry('warn', Array.from(arguments));
+    };
+    
+    console.error = function() {
+      // Call original
+      originalConsole.error.apply(console, arguments);
+      
+      // Add to our logs
+      addLogEntry('error', Array.from(arguments));
+    };
+    
+    console.info = function() {
+      // Call original
+      originalConsole.info.apply(console, arguments);
+      
+      // Add to our logs
+      addLogEntry('info', Array.from(arguments));
+    };
+    
+    // Add a log entry
+    function addLogEntry(type, args) {
+      const timestamp = new Date().toISOString();
+      const entry = {
+        type,
+        timestamp,
+        args,
+        message: args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+        ).join(' ')
+      };
+      
+      logs.push(entry);
+      
+      // Update display
+      updateLogDisplay();
+    }
+    
+    // Update the log display
+    function updateLogDisplay() {
+      // Clear the display
+      logDisplay.innerHTML = '';
+      
+      // Filter logs
+      const filter = filterText.value.toLowerCase();
+      const filteredLogs = logs.filter(log => {
+        // Type filter
+        if (log.type === 'error' && !showErrors.checked) return false;
+        if ((log.type === 'warn' || log.type === 'warning') && !showWarnings.checked) return false;
+        if ((log.type === 'log' || log.type === 'info') && !showInfo.checked) return false;
+        
+        // Text filter
+        if (filter && !log.message.toLowerCase().includes(filter)) return false;
+        
+        return true;
+      });
+      
+      // Add filtered logs to display
+      filteredLogs.forEach(log => {
+        const entryElement = document.createElement('div');
+        entryElement.className = `log-entry ${log.type}`;
+        entryElement.textContent = `[${log.timestamp}] [${log.type.toUpperCase()}] ${log.message}`;
+        logDisplay.appendChild(entryElement);
+      });
+      
+      // Scroll to bottom
+      logDisplay.scrollTop = logDisplay.scrollHeight;
+    }
+    
+    // Event listeners
+    filterText.addEventListener('input', updateLogDisplay);
+    showErrors.addEventListener('change', updateLogDisplay);
+    showWarnings.addEventListener('change', updateLogDisplay);
+    showInfo.addEventListener('change', updateLogDisplay);
+    
+    clearLogsBtn.addEventListener('click', () => {
+      logs = [];
+      updateLogDisplay();
+    });
+    
+    copyLogsBtn.addEventListener('click', () => {
+      const logText = logs.map(log => 
+        `[${log.timestamp}] [${log.type.toUpperCase()}] ${log.message}`
+      ).join('\n');
+      
+      navigator.clipboard.writeText(logText)
+        .then(() => alert('Logs copied to clipboard'))
+        .catch(err => console.error('Failed to copy logs:', err));
+    });
+    
+    // Test server connection
+    testConnectionBtn.addEventListener('click', async () => {
+      const host = serverHost.value;
+      const port = serverPort.value;
+      
+      testResult.innerHTML = `<div style="color: #5bc0de;">Testing connection to ${host}:${port}...</div>`;
+      console.log(`Manually testing connection to http://${host}:${port}/.identity`);
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch(`http://${host}:${port}/.identity`, {
+          signal: controller.signal,
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        console.log(`Server response status: ${response.status}`);
+        
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        
+        const contentType = response.headers.get('content-type');
+        console.log(`Content-Type: ${contentType}`);
+        
+        let identity;
+        if (contentType && contentType.includes('application/json')) {
+          identity = await response.json();
+          console.log("Server identity response:", identity);
+        } else {
+          const text = await response.text();
+          console.log("Server response (text):", text);
+          try {
+            identity = JSON.parse(text);
+            console.log("Parsed JSON from text response:", identity);
+          } catch (parseError) {
+            throw new Error(`Server did not return valid JSON: ${text.substring(0, 100)}...`);
+          }
+        }
+        
+        // Verify this is actually our server
+        if (identity.signature === "mcp-browser-connector-24x7") {
+          console.log("Connection successful: Valid server signature");
+          testResult.innerHTML = `
+            <div style="color: #5cb85c; font-weight: bold;">✓ Connection successful</div>
+            <div>Name: ${identity.name || "Unknown"}</div>
+            <div>Version: ${identity.version || "Unknown"}</div>
+            <div>Signature: ${identity.signature}</div>
+          `;
+        } else {
+          console.error("Invalid server signature:", identity.signature);
+          testResult.innerHTML = `
+            <div style="color: #d9534f; font-weight: bold;">✗ Invalid server signature</div>
+            <div>Got: ${identity.signature}</div>
+            <div>Expected: mcp-browser-connector-24x7</div>
+            <div>This is not a valid BrowserTools server</div>
+          `;
+        }
+      } catch (error) {
+        console.error("Connection test failed:", error);
+        testResult.innerHTML = `
+          <div style="color: #d9534f; font-weight: bold;">✗ Connection failed</div>
+          <div>${error.message}</div>
+          <div>Please check that the server is running and the host/port are correct</div>
+        `;
+      }
+    });
+    
+    // Initial log
+    console.log("Log Inspector initialized");
+    console.info("Use the server test to check connections");
+    console.warn("Warning and error messages will appear in different colors");
+  </script>
+</body>
+</html> 

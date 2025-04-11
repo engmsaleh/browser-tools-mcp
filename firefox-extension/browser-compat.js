@@ -210,6 +210,36 @@ const browserAPI = {
           }
         });
       }
+    },
+
+    /**
+     * Add a listener for tab updates
+     * @param {Function} callback - Function to call when a tab is updated
+     * @param {object} filter - Optional filter for events
+     */
+    onUpdated: {
+      addListener: function(callback, filter) {
+        if (isFirefox) {
+          browser.tabs.onUpdated.addListener(callback, filter);
+        } else {
+          // Chrome's filter needs to be passed as the second argument
+          chrome.tabs.onUpdated.addListener(callback, filter || {});
+        }
+      }
+    },
+
+    /**
+     * Add a listener for tab activation changes
+     * @param {Function} callback - Function to call when the active tab changes
+     */
+    onActivated: {
+      addListener: function(callback) {
+        if (isFirefox) {
+          browser.tabs.onActivated.addListener(callback);
+        } else {
+          chrome.tabs.onActivated.addListener(callback);
+        }
+      }
     }
   },
 

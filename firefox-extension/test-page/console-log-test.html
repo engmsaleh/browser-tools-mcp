@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Console Log Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .log-container {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            min-height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Console Log Test Page</h1>
+    <p>This page generates different types of console logs to test the BrowserTools MCP Firefox extension.</p>
+    
+    <div>
+        <button onclick="logSimpleMessage()">Log Simple Message</button>
+        <button onclick="logObjectData()">Log Object</button>
+        <button onclick="logArrayData()">Log Array</button>
+        <button onclick="logErrorMessage()">Log Error</button>
+        <button onclick="logWarningMessage()">Log Warning</button>
+        <button onclick="logComplexData()">Log Complex Data</button>
+        <button onclick="triggerNetworkRequest()">Network Request</button>
+    </div>
+    
+    <h2>Instructions:</h2>
+    <ol>
+        <li>Make sure the Firefox BrowserTools MCP extension is installed</li>
+        <li>Open Firefox DevTools and navigate to the BrowserTools MCP panel</li>
+        <li>Verify that the panel shows "Connected to WebSocket"</li>
+        <li>Click the buttons above to generate different console logs</li>
+        <li>Check if the logs appear in the browser-tools-server</li>
+    </ol>
+    
+    <div class="log-container" id="localLogs">
+        <h3>Local Log Record:</h3>
+        <div id="logContent"></div>
+    </div>
+    
+    <script>
+        // Keep a record of logs for display on the page
+        function addToLocalLogs(level, message) {
+            const logContent = document.getElementById('logContent');
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>${level}:</strong> ${typeof message === 'object' ? JSON.stringify(message) : message}`;
+            logContent.appendChild(logEntry);
+        }
+        
+        // Simple string message
+        function logSimpleMessage() {
+            const message = "Hello, this is a simple log message!";
+            console.log(message);
+            addToLocalLogs("log", message);
+        }
+        
+        // Object data
+        function logObjectData() {
+            const obj = {
+                name: "Test Object",
+                id: 12345,
+                properties: {
+                    color: "blue",
+                    size: "large",
+                    active: true
+                }
+            };
+            console.log("Object data:", obj);
+            addToLocalLogs("log", obj);
+        }
+        
+        // Array data
+        function logArrayData() {
+            const arr = [1, 2, 3, "four", { five: 5 }, [6, 7, 8]];
+            console.log("Array data:", arr);
+            addToLocalLogs("log", arr);
+        }
+        
+        // Error message
+        function logErrorMessage() {
+            const error = new Error("This is a test error message");
+            console.error("Error occurred:", error);
+            addToLocalLogs("error", error.message);
+        }
+        
+        // Warning message
+        function logWarningMessage() {
+            console.warn("This is a warning message");
+            addToLocalLogs("warn", "This is a warning message");
+        }
+        
+        // Complex data with multiple arguments
+        function logComplexData() {
+            const user = { id: 123, name: "Test User" };
+            const stats = [
+                { date: "2025-04-01", value: 42 },
+                { date: "2025-04-02", value: 56 }
+            ];
+            console.log("User data:", user, "Stats:", stats, "Additional info:", "Active session");
+            addToLocalLogs("log", { user, stats });
+        }
+        
+        // Trigger a network request
+        function triggerNetworkRequest() {
+            fetch('https://jsonplaceholder.typicode.com/todos/1')
+                .then(response => response.json())
+                .then(json => {
+                    console.log("Network response:", json);
+                    addToLocalLogs("log", json);
+                })
+                .catch(error => {
+                    console.error("Network error:", error);
+                    addToLocalLogs("error", error.message);
+                });
+        }
+        
+        // Log page load
+        window.addEventListener('load', () => {
+            console.log("Page loaded at", new Date().toISOString());
+            addToLocalLogs("log", `Page loaded at ${new Date().toISOString()}`);
+        });
+    </script>
+</body>
+</html>

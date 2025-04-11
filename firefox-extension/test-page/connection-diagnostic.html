@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrowserTools Connection Diagnostic</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1, h2, h3 { color: #333; }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 20px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 10px 5px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    #log {
+      background-color: #f5f5f5;
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .success { color: green; }
+    .error { color: red; }
+    .info { color: blue; }
+    .warning { color: orange; }
+    
+    .settings {
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+      margin-bottom: 20px;
+    }
+    
+    .settings label, .settings input {
+      margin-right: 10px;
+    }
+    
+    .summary {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f0f8ff;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+    }
+    
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid #ddd;
+    }
+    
+    th {
+      background-color: #f2f2f2;
+    }
+    
+    tr.success {
+      background-color: #e8f5e9;
+    }
+    
+    tr.error {
+      background-color: #ffebee;
+    }
+  </style>
+</head>
+<body>
+  <h1>BrowserTools Connection Diagnostic</h1>
+  <p>This tool helps diagnose connection issues between Firefox extension and BrowserTools server.</p>
+  
+  <div class="settings">
+    <div>
+      <label for="server-host">Host:</label>
+      <input type="text" id="server-host" value="localhost">
+      
+      <label for="server-port">Port:</label>
+      <input type="text" id="server-port" value="3025">
+      
+      <button id="test-identity-btn">Test Server Identity</button>
+      <button id="run-tests-btn">Run All WebSocket Tests</button>
+      <button id="clear-log-btn">Clear Log</button>
+    </div>
+  </div>
+  
+  <div class="summary">
+    <h2>Connection Summary</h2>
+    <div id="identity-result">Server Identity: Not checked</div>
+    
+    <h3>WebSocket Connection Results:</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Path</th>
+          <th>Status</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody id="results-table">
+        <!-- Test results will be inserted here -->
+      </tbody>
+    </table>
+    
+    <h3>Recommended Connection Parameters:</h3>
+    <div id="recommendation">
+      <span class="info">Run tests to get a recommendation</span>
+    </div>
+  </div>
+  
+  <h2>Log</h2>
+  <div id="log"></div>
+  
+  <!-- Include the diagnostic script -->
+  <script src="diagnostic.js"></script>
+</body>
+</html> 

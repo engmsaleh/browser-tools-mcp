@@ -1,4 +1,14 @@
-// panel.js - Firefox compatible version
+// panel.js - Refactored for Content Script Console & HAR Network
+
+// Debugger and WebSocket state
+let ws = null;
+let wsReconnectTimeout = null;
+let intentionalClosure = false;
+
+// Log storage (moved here from devtools.js)
+const consoleLogs = [];
+const consoleErrors = [];
+const networkLogEntries = []; // Changed from Map to Array for HAR
 
 // Store settings
 let settings = {
@@ -24,26 +34,58 @@ let statusIcon = null;
 let statusText = null;
 let connectionStatusDiv = null;
 
+// Get the current tab ID
+// This needs to run within the DevTools panel context
+let currentTabId = null;
+function getCurrentTabId() {
+  try {
+    // Use the devtools API available in panel context
+    currentTabId = browser.devtools.inspectedWindow.tabId;
+    console.log("Panel: Inspected tab ID:", currentTabId);
+  } catch (e) {
+    console.error("Panel: Failed to get inspectedWindow.tabId", e);
+    // Handle error, maybe show a message in the panel?
+  }
+}
+
 /**
  * Initialize the panel
  */
 async function initPanel() {
-  console.log("Initializing panel");
+  console.log("Panel: Initializing...");
   
-  // Load settings
+  getCurrentTabId();
+  if (!currentTabId) {
+     console.error("Panel: Could not determine inspected tab ID. Aborting initialization.");
+     return;
+  }
+  
   await loadSettings();
-  
-  // Set up UI event listeners
   setupEventListeners();
-  
-  // Create connection status banner
   createConnectionBanner();
-  
-  // Update UI from settings
   updateUIFromSettings();
+
+  // Set up WebSocket connection (can happen earlier now)
+  setupWebSocket(); 
   
-  // Auto-discover server
+  // Discover server
   discoverServer(true);
+
+  // Listen for Network HAR entries
+  try {
+    browser.devtools.network.onRequestFinished.addListener(handleNetworkHAR);
+    console.log("Panel: Added network HAR listener.");
+  } catch (e) {
+    console.error("Panel: Failed to add network listener", e);
+  }
+
+  // Listen for messages from the BACKGROUND script (forwarded console logs)
+  try {
+    browser.runtime.onMessage.addListener(handleBackgroundMessage);
+    console.log("Panel: Added background message listener.");
+  } catch (e) {
+    console.error("Panel: Failed to add runtime message listener", e);
+  }
 }
 
 /**
@@ -356,6 +398,7 @@ async function discoverServer(quietMode = false) {
   cancelOngoingDiscovery();
   
   isDiscoveryInProgress = true;
+  console.log("Starting server discovery...");
   
   // Update UI to show we're searching for the server
   if (!quietMode && connectionStatusDiv) {
@@ -386,23 +429,47 @@ async function discoverServer(quietMode = false) {
   // Create an abort controller for timeouts
   discoveryController = new AbortController();
   
+  // Set a longer global timeout for the whole discovery process
+  const maxDiscoveryTime = setTimeout(() => {
+    if (discoveryController) {
+      console.log("Discovery timed out after 30 seconds");
+      discoveryController.abort();
+    }
+  }, 30000);
+  
   // Try to find the server
   for (const host of hosts) {
-    if (serverFound) break;
+    if (serverFound || !discoveryController) break;
     
     for (const port of ports) {
-      if (serverFound) break;
+      if (serverFound || !discoveryController) break;
       
       try {
         console.log(`Checking ${host}:${port}...`);
         
+        // Use the identity endpoint for validation with a 5 second timeout per attempt
+        const timeoutId = setTimeout(() => {
+          if (discoveryController) {
+            console.log(`Individual request to ${host}:${port} timed out`);
+          }
+        }, 5000);
+        
         // Use the identity endpoint for validation
         const response = await fetch(`http://${host}:${port}/.identity`, {
           signal: discoveryController.signal,
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json'
+          }
         });
+        
+        clearTimeout(timeoutId);
+        
+        console.log(`Response from ${host}:${port}: status ${response.status}`);
         
         if (response.ok) {
           const identity = await response.json();
+          console.log(`Server identity from ${host}:${port}:`, identity);
           
           // Verify this is actually our server by checking the signature
           if (identity.signature === "mcp-browser-connector-24x7") {
@@ -433,6 +500,7 @@ async function discoverServer(quietMode = false) {
             }
             
             // Notify the background script and DevTools panel
+            console.log("Sending server validation success message");
             await browserAPI.runtime.sendMessage({
               type: "SERVER_VALIDATION_SUCCESS",
               serverHost: host,
@@ -441,6 +509,8 @@ async function discoverServer(quietMode = false) {
             });
             
             break;
+          } else {
+            console.log(`Server at ${host}:${port} has invalid signature: ${identity.signature}`);
           }
         }
       } catch (error) {
@@ -454,6 +524,9 @@ async function discoverServer(quietMode = false) {
       }
     }
   }
+  
+  // Clear the global timeout
+  clearTimeout(maxDiscoveryTime);
   
   // Update UI if no server was found
   if (!serverFound && !quietMode) {
@@ -483,26 +556,37 @@ async function testConnection(host, port) {
   statusIcon.className = "status-indicator";
   statusText.textContent = `Testing connection to ${host}:${port}...`;
   
+  console.log(`Testing connection to ${host}:${port}...`);
+  
   try {
     // Try to connect to the server
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // Increased timeout to 10s
     
+    console.log(`Sending fetch request to http://${host}:${port}/.identity`);
     const response = await fetch(`http://${host}:${port}/.identity`, {
-      signal: controller.signal
+      signal: controller.signal,
+      mode: 'cors', // Add CORS mode
+      headers: {
+        'Accept': 'application/json'
+      }
     });
     
     clearTimeout(timeoutId);
+    
+    console.log(`Server response status: ${response.status}`);
     
     if (!response.ok) {
       throw new Error(`Server returned ${response.status}: ${response.statusText}`);
     }
     
     const identity = await response.json();
+    console.log("Server identity response:", identity);
     
     // Verify this is actually our server
     if (identity.signature === "mcp-browser-connector-24x7") {
       // Connection successful
+      console.log("Connection successful: Valid server signature");
       statusIcon.className = "status-indicator status-connected";
       statusText.textContent = `Connected successfully to ${identity.name || "Browser Tools Server"} v${identity.version || "unknown"}`;
       
@@ -523,6 +607,7 @@ async function testConnection(host, port) {
       }
       
       // Notify the background script and DevTools panel
+      console.log("Sending server validation success message");
       await browserAPI.runtime.sendMessage({
         type: "SERVER_VALIDATION_SUCCESS",
         serverHost: host,
@@ -535,10 +620,12 @@ async function testConnection(host, port) {
         connectionStatusDiv.style.display = "none";
       }, 3000);
     } else {
+      console.error("Invalid server signature:", identity.signature);
       throw new Error("Invalid server signature - not a BrowserTools server");
     }
   } catch (error) {
     // Connection failed
+    console.error("Connection test failed:", error);
     statusIcon.className = "status-indicator status-disconnected";
     statusText.textContent = `Connection failed: ${error.message}`;
     
@@ -558,75 +645,359 @@ async function testConnection(host, port) {
 }
 
 /**
- * Capture screenshot
+ * Capture screenshot - Modified to ensure background message is sent
  */
 async function captureScreenshot() {
+  if (!currentTabId) {
+    console.error("Panel: Cannot capture screenshot, missing tab ID.");
+    alert("Error: Could not determine the current tab ID.");
+    return;
+  }
   try {
-    // First get the current tab ID from the DevTools
-    const tabId = isFirefox 
-      ? browser.devtools.inspectedWindow.tabId
-      : chrome.devtools.inspectedWindow.tabId;
-    
-    if (!tabId) {
-      console.error("Could not get current tab ID");
-      return;
-    }
-    
-    console.log("Capturing screenshot for tab:", tabId);
+    console.log(`Panel: Requesting screenshot for tab: ${currentTabId}`);
     
     // Send message to the background script to capture the screenshot
     const response = await browserAPI.runtime.sendMessage({
       type: "CAPTURE_SCREENSHOT",
-      tabId: tabId
+      tabId: currentTabId
+      // Pass settings directly if needed by background, or let background load them
+      // settings: settings 
     });
     
-    console.log("Screenshot capture response:", response);
+    console.log("Panel: Screenshot capture response:", response);
     
     if (response && response.success) {
-      // Show success message
-      alert("Screenshot captured successfully");
+      // Show success message (maybe more detailed)
+      alert(`Screenshot captured successfully! Saved to: ${response.path || 'default location'}`);
     } else {
       // Show error message
       alert(`Failed to capture screenshot: ${response?.error || "Unknown error"}`);
     }
   } catch (error) {
-    console.error("Error capturing screenshot:", error);
+    console.error("Panel: Error capturing screenshot:", error);
     alert(`Error capturing screenshot: ${browserAPI.getErrorMessage(error)}`);
   }
 }
 
 /**
- * Wipe all logs
+ * Wipe all logs - Modified to use sendToServer if WS is primary
  */
 async function wipeLogs() {
   if (!confirm("Are you sure you want to wipe all logs?")) {
     return;
   }
   
+  console.log("Panel: Wiping local logs...");
+  consoleLogs.length = 0;
+  consoleErrors.length = 0;
+  networkLogEntries.length = 0; // Clear HAR logs
+  
+  console.log("Panel: Requesting server to wipe logs...");
+  // Primary method: Send command via WebSocket if connected
+  if (sendToServer("wipe-logs", {})) {
+    alert("Wipe command sent to server.");
+    return;
+  } 
+  
+  // Fallback: Send via HTTP if WebSocket failed
+  console.warn("Panel: WebSocket unavailable, falling back to HTTP POST for wipe logs.");
   try {
-    // Get server settings
     const host = settings.serverHost;
     const port = settings.serverPort;
+    if (!host || !port) throw new Error("Server host/port not configured");
     
-    if (!host || !port) {
-      throw new Error("Server host or port not configured");
-    }
-    
-    // Send wipe request to server
     const response = await fetch(`http://${host}:${port}/wipe-logs`, {
-      method: "POST"
+      method: "POST",
+      mode: 'cors' // Ensure CORS for HTTP fallback
     });
     
-    if (!response.ok) {
-      throw new Error(`Server returned ${response.status}: ${response.statusText}`);
-    }
-    
-    alert("Logs wiped successfully");
+    if (!response.ok) throw new Error(`Server error ${response.status}`);
+    const result = await response.json();
+    console.log("Panel: Server wipe response (HTTP):", result);
+    alert("Logs wiped successfully (via HTTP).");
+
   } catch (error) {
-    console.error("Error wiping logs:", error);
+    console.error("Panel: Error wiping logs via HTTP:", error);
     alert(`Error wiping logs: ${error.message}`);
   }
 }
 
-// Initialize the panel
-document.addEventListener("DOMContentLoaded", initPanel); 
+// Initialize the panel when the DOM is ready
+document.addEventListener("DOMContentLoaded", initPanel);
+
+// Add listeners to detach debugger when panel is closed/hidden
+// These might not work in all Firefox versions or contexts
+window.addEventListener('unload', () => {
+  console.log("Panel unloading, detaching debugger...");
+  // Close WebSocket cleanly if open
+  if (ws) {
+    intentionalClosure = true;
+    ws.close();
+  }
+});
+
+// --- WebSocket Logic (Keep) ---
+
+/**
+ * Setup WebSocket connection
+ */
+async function setupWebSocket() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log("Panel: WebSocket already open.");
+    return;
+  }
+  if (ws && ws.readyState === WebSocket.CONNECTING) {
+    console.log("Panel: WebSocket connection attempt already in progress.");
+    return;
+  }
+
+  if (!settings.serverHost || !settings.serverPort) {
+    console.warn("Panel: Cannot connect WebSocket, server host/port not set.");
+    updateConnectionBanner(false, null);
+    return;
+  }
+  
+  // Validate server before connecting (optional but good practice)
+  console.log(`Panel: Validating server before WebSocket connection: http://${settings.serverHost}:${settings.serverPort}/.identity`);
+  try {
+    const identityResponse = await fetch(`http://${settings.serverHost}:${settings.serverPort}/.identity`, { mode: 'cors' });
+    if (!identityResponse.ok) throw new Error(`Identity check failed: ${identityResponse.status}`);
+    const identity = await identityResponse.json();
+    console.log("Panel: Server identity:", identity);
+    if (identity.signature !== "mcp-browser-connector-24x7") throw new Error("Invalid server signature");
+    console.log("Panel: Server validation successful, proceeding with WebSocket connection.");
+  } catch (validationError) {
+    console.error("Panel: Server validation failed before WebSocket connect:", validationError);
+    updateConnectionBanner(false, null); // Show disconnected
+    // Optionally schedule a reconnect attempt for discovery?
+    scheduleReconnectAttempt(); 
+    return;
+  }
+
+  const wsUrl = `ws://${settings.serverHost}:${settings.serverPort}/extension-ws`;
+  console.log(`Panel: Connecting to WebSocket: ${wsUrl}`);
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (error) {
+    console.error("Panel: WebSocket constructor failed:", error);
+    updateConnectionBanner(false, null);
+    scheduleReconnectAttempt();
+    return;
+  }
+
+  ws.onopen = () => {
+    console.log("Panel: WebSocket connection opened successfully");
+    serverConnected = true;
+    intentionalClosure = false;
+    updateConnectionBanner(true, { host: settings.serverHost, port: settings.serverPort });
+    if (reconnectAttemptTimeout) clearTimeout(reconnectAttemptTimeout);
+
+    // Send identification and initial data
+    console.log("Panel: Sending identification message...");
+    sendToServer("extension_connected", { 
+        extension: "firefox-browser-tools-mcp", 
+        version: browser.runtime.getManifest().version, // Get version dynamically
+        tabId: currentTabId 
+    });
+    sendToServer("ping", {});
+    sendInitialData();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      console.log("Panel: Received WebSocket message:", data);
+      handleWebSocketMessage(data);
+    } catch (error) {
+      console.error("Panel: Error processing WebSocket message:", error);
+    }
+  };
+
+  ws.onerror = (event) => {
+    console.error("Panel: WebSocket error:", event);
+    // UI update is handled by onclose
+  };
+
+  ws.onclose = (event) => {
+    console.log(`Panel: WebSocket closed. Code: ${event.code}, Reason: ${event.reason}, Intentional: ${intentionalClosure}`);
+    ws = null;
+    serverConnected = false;
+    updateConnectionBanner(false, null);
+    if (!intentionalClosure) {
+      scheduleReconnectAttempt(); // Attempt to reconnect if closure was unexpected
+    }
+  };
+}
+
+/**
+ * Handle incoming WebSocket messages from the server
+ */
+function handleWebSocketMessage(data) {
+  switch (data.type) {
+    case "pong":
+      console.log("Panel: Received pong from server.");
+      break;
+    case "server-shutdown":
+      console.log("Panel: Server initiated shutdown.");
+      intentionalClosure = true;
+      if (ws) ws.close();
+      updateConnectionBanner(false, null);
+      break;
+    // Add handlers for other potential server -> client messages if needed
+    default:
+      console.warn(`Panel: Unhandled WebSocket message type from server: ${data.type}`);
+  }
+}
+
+/**
+ * Send data to the server via WebSocket
+ */
+function sendToServer(type, data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      const message = JSON.stringify({ type, data });
+      // Optional: Truncate large messages for logging
+      const logMessage = message.length > 500 ? message.substring(0, 500) + '... (truncated)' : message;
+      console.log(`Panel: Sending WebSocket message: ${logMessage}`);
+      ws.send(message);
+      return true;
+    } catch (error) {
+      console.error("Panel: Failed to send WebSocket message:", error);
+      return false;
+    }
+  } else {
+    console.warn(`Panel: Cannot send WebSocket message, connection not open. Type: ${type}`);
+    return false;
+  }
+}
+
+/**
+ * Send initial data (logs) to server on connection
+ */
+function sendInitialData() {
+  console.log("Panel: Sending initial data (logs) to server...");
+  // Send any logs that might have accumulated before connection
+  consoleLogs.forEach(log => sendToServer("console-log", log));
+  consoleErrors.forEach(log => sendToServer("console-error", log));
+  networkLogEntries.forEach(req => sendToServer("network-request", req)); // Send stored HAR entries
+  console.log("Panel: Initial data sent.");
+}
+
+/**
+ * Handle HAR entry from browser.devtools.network.onRequestFinished
+ */
+function handleNetworkHAR(harEntry) {
+    console.log("Panel: Received HAR entry for:", harEntry.request.url);
+    try {
+        // Format the HAR entry into something the server expects
+        // This requires adapting the HAR structure to the previous format
+        // or updating the server to accept HAR format directly.
+        // Basic example assuming server wants previous format:
+        const formattedEntry = {
+            requestId: harEntry._request_id || `${harEntry.request.method}-${harEntry.request.url}-${harEntry.startedDateTime}`, // Generate unique ID if needed
+            url: harEntry.request.url,
+            method: harEntry.request.method,
+            status: harEntry.response.status,
+            statusText: harEntry.response.statusText,
+            timestamp: new Date(harEntry.startedDateTime).toISOString(),
+            time: harEntry.time, // Total duration
+            mimeType: harEntry.response.content.mimeType,
+            requestHeaders: settings.showRequestHeaders ? harEntry.request.headers : undefined,
+            responseHeaders: settings.showResponseHeaders ? harEntry.response.headers : undefined,
+            requestBody: harEntry.request.postData ? (harEntry.request.postData.text || "[Binary/Non-Text Request Body]") : "",
+            responseBody: "", // Placeholder, needs population
+            encodedDataLength: harEntry.response.content.size,
+            // ... add other relevant fields if needed
+        };
+
+        // Handle response body content
+        if (harEntry.response.content.text) {
+            if (harEntry.response.content.encoding === "base64") {
+                // Indicate binary data (similar to before)
+                const mimeType = formattedEntry.mimeType || 'application/octet-stream';
+                const fileExtension = mimeType.split('/').pop().split(';')[0];
+                formattedEntry.responseBody = `[Binary data: ${mimeType}, size: ${formattedEntry.encodedDataLength} bytes, type: ${fileExtension}]`;
+            } else {
+                formattedEntry.responseBody = harEntry.response.content.text;
+                // Truncate if necessary
+                if (formattedEntry.responseBody.length > settings.stringSizeLimit) {
+                    formattedEntry.responseBody = formattedEntry.responseBody.substring(0, settings.stringSizeLimit) + `... [truncated]`;
+                }
+            }
+        } else {
+            formattedEntry.responseBody = "[No Text Content]";
+        }
+
+        console.log("Panel: Formatted HAR entry:", formattedEntry);
+
+        // Store and send
+        if (networkLogEntries.length >= settings.logLimit) networkLogEntries.shift();
+        networkLogEntries.push(formattedEntry);
+        sendToServer("network-request", formattedEntry); // Send full details
+
+    } catch (error) {
+        console.error("Panel: Error processing HAR entry for", harEntry.request.url, error);
+    }
+}
+
+/**
+ * Handle messages forwarded from the background script
+ */
+function handleBackgroundMessage(message, sender) {
+    // No need to check sender, background filters by tabId before sending
+    console.log("Panel: Received message from background:", message.type);
+    
+    // Add detailed logging
+    console.log("Panel: Message details:", {
+        type: message.type,
+        hasPayload: !!message.payload,
+        tabId: message.tabId,
+        from: sender?.id || "unknown"
+    });
+
+    if (message.type === "FORWARDED_CONSOLE_LOG") {
+        handleForwardedConsoleMessage(message.payload);
+    }
+    // Handle other background messages if needed
+}
+
+/**
+ * Handle forwarded console log message from background script
+ */
+function handleForwardedConsoleMessage(payload) {
+  try {
+    console.log("Panel: Handling forwarded console message", payload);
+    
+    // Payload should already be mostly formatted by content script
+    const logEntry = {
+      timestamp: payload.timestamp || new Date().toISOString(),
+      type: payload.level === "error" ? "console-error" : "console-log",
+      message: payload.args ? payload.args.join(' ') : '[No Message Arguments]', // Reconstruct message from args
+      level: payload.level,
+      source: "content-script", // Indicate source
+      url: payload.url,
+      // line, column, stackTrace might be missing from content script
+    };
+
+    console.log("Panel: Formatted forwarded log entry:", logEntry);
+
+    // Store locally 
+    switch (logEntry.level) {
+      case "error":
+        if (consoleErrors.length >= settings.logLimit) consoleErrors.shift();
+        consoleErrors.push(logEntry);
+        break;
+      default:
+        if (consoleLogs.length >= settings.logLimit) consoleLogs.shift();
+        consoleLogs.push(logEntry);
+        break;
+    }
+
+    // Send to server via WebSocket
+    sendToServer(logEntry.type, logEntry);
+
+  } catch (error) {
+    console.error("Panel: Error handling forwarded console message:", error);
+  }
+} 

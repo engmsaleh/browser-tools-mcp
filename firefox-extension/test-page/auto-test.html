@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrowserTools MCP Automated Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    h1 { color: #333; }
+    .progress {
+      height: 20px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      margin: 20px 0;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background-color: #4CAF50;
+      text-align: center;
+      line-height: 20px;
+      color: white;
+      transition: width 0.3s ease;
+    }
+    #results {
+      background-color: #f5f5f5;
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    .status.success {
+      background-color: #dff0d8;
+      border: 1px solid #d0e9c6;
+      color: #3c763d;
+    }
+    .status.error {
+      background-color: #f2dede;
+      border: 1px solid #ebcccc;
+      color: #a94442;
+    }
+    .status.info {
+      background-color: #d9edf7;
+      border: 1px solid #bce8f1;
+      color: #31708f;
+    }
+    .test-summary {
+      display: flex;
+      justify-content: space-between;
+      margin: 20px 0;
+    }
+    .test-count {
+      background-color: #f8f9fa;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 15px;
+      text-align: center;
+      flex: 1;
+      margin: 0 5px;
+    }
+    .test-count h3 {
+      margin-top: 0;
+    }
+    .number {
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .success-count { color: #28a745; }
+    .failed-count { color: #dc3545; }
+    .pending-count { color: #ffc107; }
+  </style>
+</head>
+<body>
+  <h1>BrowserTools MCP Automated Test</h1>
+  
+  <div id="status" class="status info">
+    Initializing tests...
+  </div>
+  
+  <div class="progress">
+    <div id="progress-bar" class="progress-bar" style="width: 0%">0%</div>
+  </div>
+  
+  <div class="test-summary">
+    <div class="test-count">
+      <h3>Total Tests</h3>
+      <div id="total-count" class="number">0</div>
+    </div>
+    <div class="test-count">
+      <h3>Passed</h3>
+      <div id="success-count" class="number success-count">0</div>
+    </div>
+    <div class="test-count">
+      <h3>Failed</h3>
+      <div id="failed-count" class="number failed-count">0</div>
+    </div>
+    <div class="test-count">
+      <h3>Pending</h3>
+      <div id="pending-count" class="number pending-count">0</div>
+    </div>
+  </div>
+  
+  <h2>Test Results</h2>
+  <div id="results">Tests will start automatically in 3 seconds...</div>
+  
+  <script>
+    // <<< START EMBEDDED test-network-requests.js >>>
+    const BrowserToolsTest = {
+      // Base URL for testing
+      baseUrl: 'https://jsonplaceholder.typicode.com',
+
+      /**
+       * Test simple XHR GET request
+       */
+      testXhrGet: function() {
+        console.log('🧪 Testing XHR GET request...');
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', `${this.baseUrl}/posts/1`, true);
+
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            console.log('✅ XHR GET request successful:', JSON.parse(xhr.responseText));
+          } else {
+            console.error('❌ XHR GET request failed:', xhr.status, xhr.statusText);
+          }
+        };
+
+        xhr.onerror = function() {
+          console.error('❌ XHR GET network error');
+        };
+
+        xhr.send();
+      },
+
+      /**
+       * Test XHR POST request with JSON body
+       */
+      testXhrPost: function() {
+        console.log('🧪 Testing XHR POST request with JSON body...');
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${this.baseUrl}/posts`, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            console.log('✅ XHR POST request successful:', JSON.parse(xhr.responseText));
+          } else {
+            console.error('❌ XHR POST request failed:', xhr.status, xhr.statusText);
+          }
+        };
+
+        xhr.onerror = function() {
+          console.error('❌ XHR POST network error');
+        };
+
+        const data = JSON.stringify({
+          title: 'Browser Tools Test',
+          body: 'This is a test POST request',
+          userId: 1
+        });
+
+        xhr.send(data);
+      },
+
+      /**
+       * Test Fetch GET request
+       */
+      testFetchGet: function() {
+        console.log('🧪 Testing Fetch GET request...');
+
+        fetch(`${this.baseUrl}/todos/1`)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            console.log('✅ Fetch GET request successful:', data);
+          })
+          .catch(error => {
+            console.error('❌ Fetch GET request failed:', error);
+          });
+      },
+
+      /**
+       * Test Fetch POST request with JSON body
+       */
+      testFetchPost: function() {
+        console.log('🧪 Testing Fetch POST request with JSON body...');
+
+        fetch(`${this.baseUrl}/posts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Test-Header': 'FirefoxExtensionTest'
+          },
+          body: JSON.stringify({
+            title: 'Browser Tools Test Fetch',
+            body: 'This is a test Fetch POST request',
+            userId: 1
+          })
+        })
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            console.log('✅ Fetch POST request successful:', data);
+          })
+          .catch(error => {
+            console.error('❌ Fetch POST request failed:', error);
+          });
+      },
+
+      /**
+       * Test error response handling
+       */
+      testErrorResponse: function() {
+        console.log('🧪 Testing error response handling...');
+
+        fetch(`${this.baseUrl}/nonexistent-endpoint`)
+          .then(response => {
+            if (!response.ok) {
+              console.log(`✅ Expected error status received: ${response.status}`);
+              return response.text();
+            }
+            return response.json();
+          })
+          .then(data => {
+            console.log('Response data:', data);
+          })
+          .catch(error => {
+            console.error('❌ Request error:', error);
+          });
+      },
+
+      /**
+       * Test binary data request
+       */
+      testBinaryData: function() {
+        console.log('🧪 Testing binary data (image) request...');
+
+        fetch('https://picsum.photos/200')
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.blob();
+          })
+          .then(blob => {
+            console.log(`✅ Binary data received: ${blob.size} bytes, type: ${blob.type}`);
+          })
+          .catch(error => {
+            console.error('❌ Binary data request failed:', error);
+          });
+      },
+
+      /**
+       * Test multiple concurrent requests
+       */
+      testConcurrentRequests: function() {
+        console.log('🧪 Testing multiple concurrent requests...');
+
+        Promise.all([
+          fetch(`${this.baseUrl}/posts/1`).then(r => r.json()),
+          fetch(`${this.baseUrl}/posts/2`).then(r => r.json()),
+          fetch(`${this.baseUrl}/posts/3`).then(r => r.json())
+        ])
+          .then(dataArray => {
+            console.log('✅ All concurrent requests successful:', dataArray);
+          })
+          .catch(error => {
+            console.error('❌ Concurrent requests failed:', error);
+          });
+      },
+
+      /**
+       * Test redirect handling
+       */
+      testRedirect: function() {
+        console.log('🧪 Testing redirect handling...');
+
+        fetch('https://httpstat.us/302')
+          .then(response => {
+            console.log(`✅ Redirect followed. Final URL: ${response.url}, status: ${response.status}`);
+            return response.text();
+          })
+          .then(text => {
+            console.log('Response text:', text);
+          })
+          .catch(error => {
+            console.error('❌ Redirect test failed:', error);
+          });
+      },
+
+      /**
+       * Run all tests in sequence
+       * Note: This is NOT used by the auto-runner below, but kept for potential manual use
+       */
+      runAllTests: function() {
+        console.log('🧪🧪🧪 Running all network request tests 🧪🧪🧪');
+
+        // Run tests with slight delays to avoid overwhelming the browser
+        this.testXhrGet();
+
+        setTimeout(() => this.testXhrPost(), 1000);
+        setTimeout(() => this.testFetchGet(), 2000);
+        setTimeout(() => this.testFetchPost(), 3000);
+        setTimeout(() => this.testErrorResponse(), 4000);
+        setTimeout(() => this.testBinaryData(), 5000);
+        setTimeout(() => this.testConcurrentRequests(), 6000);
+        setTimeout(() => this.testRedirect(), 7000);
+
+        console.log('🧪 All tests have been queued and will run sequentially');
+      }
+    };
+    // <<< END EMBEDDED test-network-requests.js >>>
+  </script>
+
+  <script>
+    // Test tracking
+    const testState = {
+      total: 8,
+      success: 0,
+      failed: 0,
+      pending: 8,
+      currentTest: 0,
+      results: []
+    };
+
+    // Update UI elements
+    const updateUI = () => {
+      document.getElementById('total-count').textContent = testState.total;
+      document.getElementById('success-count').textContent = testState.success;
+      document.getElementById('failed-count').textContent = testState.failed;
+      document.getElementById('pending-count').textContent = testState.pending;
+
+      const progress = Math.floor((testState.currentTest / testState.total) * 100);
+      document.getElementById('progress-bar').style.width = `${progress}%`;
+      document.getElementById('progress-bar').textContent = `${progress}%`;
+
+      if (testState.success + testState.failed === testState.total) {
+         if (testState.failed > 0) {
+           document.getElementById('status').className = 'status error';
+           document.getElementById('status').textContent = `${testState.failed} test(s) failed. Check results for details.`;
+         } else {
+           document.getElementById('status').className = 'status success';
+           document.getElementById('status').textContent = 'All tests completed successfully!';
+         }
+      } else if (testState.currentTest < testState.total) {
+         document.getElementById('status').className = 'status info';
+         document.getElementById('status').textContent = `Running test ${testState.currentTest + 1} of ${testState.total}...`;
+      }
+    };
+
+    // Override console.log to also display in our results div
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    const resultsDiv = document.getElementById('results');
+
+    console.log = function() {
+      const args = Array.from(arguments);
+      // Call original console.log
+      originalConsoleLog.apply(console, args);
+      // Add to our results div
+      resultsDiv.textContent += args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+      ).join(' ') + '\\n';
+      // Auto-scroll to bottom
+      resultsDiv.scrollTop = resultsDiv.scrollHeight;
+    };
+
+    console.error = function() {
+      const args = Array.from(arguments);
+      // Call original console.error
+      originalConsoleError.apply(console, args);
+      // Add to our results div with [ERROR] prefix
+      resultsDiv.textContent += '[ERROR] ' + args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+      ).join(' ') + '\\n';
+      // Auto-scroll to bottom
+      resultsDiv.scrollTop = resultsDiv.scrollHeight;
+
+      // Count errors as test failures
+      // Only count if a test is currently considered running
+      if (testState.currentTest < testState.total && testState.pending > 0) {
+          // Avoid double counting if timeout already marked as failed
+          const currentTestName = tests[testState.currentTest]; // Assumes tests array is accessible
+          if (!testState.results.find(r => r.name === currentTestName && r.status === 'failed')) {
+             testState.failed++;
+             testState.pending--;
+             testState.results.push({ name: currentTestName, status: 'failed', error: args.join(' ') });
+             updateUI();
+          }
+      }
+    };
+
+    // List of tests to run (must match keys in BrowserToolsTest)
+    const tests = [
+      'testXhrGet',
+      'testXhrPost',
+      'testFetchGet',
+      'testFetchPost',
+      'testErrorResponse',
+      'testBinaryData',
+      'testConcurrentRequests',
+      'testRedirect'
+    ];
+
+    // Function to run tests in sequence with timeout detection
+    const runTestSequence = () => {
+      console.log('Initiating test sequence...');
+      let testIndex = 0;
+
+      const runNextTest = () => {
+        if (testIndex >= tests.length) {
+          console.log('✅ Test sequence complete!');
+          // Update final status based on counts
+          updateUI();
+
+          // Signal completion to any parent scripts
+          if (window.opener) {
+            window.opener.postMessage({ type: 'test-complete', success: testState.success, failed: testState.failed }, '*');
+          }
+          return;
+        }
+
+        const testName = tests[testIndex];
+        testState.currentTest = testIndex; // Update index before running
+        updateUI(); // Update UI to show "Running test X..."
+
+        console.log(`🧪 Running test: ${testName}...`);
+
+        let testCompleted = false;
+        let testTimeoutId = setTimeout(() => {
+          if (!testCompleted) {
+             testCompleted = true; // Prevent success/error handlers from running after timeout
+             console.error(`❌ Test ${testName} timed out after 10 seconds`);
+             // Only increment failure count if not already failed by an error
+             if (!testState.results.find(r => r.name === testName && r.status === 'failed')) {
+                testState.failed++;
+                testState.pending--;
+                testState.results.push({ name: testName, status: 'failed', error: 'Timeout' });
+             }
+             updateUI();
+             testIndex++;
+             setTimeout(runNextTest, 1000); // Move to next test
+          }
+        }, 10000); // 10 second timeout
+
+        // Wrap the original test function call to handle success/failure/errors
+        try {
+          // Define completion handlers INSIDE the scope where testName is known
+          const handleSuccess = () => {
+             if (!testCompleted) {
+                testCompleted = true;
+                clearTimeout(testTimeoutId);
+                console.log(`✅ Test ${testName} reported success.`);
+                 // Check if it already failed due to console.error override
+                if (!testState.results.find(r => r.name === testName && r.status === 'failed')) {
+                   testState.success++;
+                   testState.pending--;
+                   testState.results.push({ name: testName, status: 'passed' });
+                }
+                updateUI();
+                testIndex++;
+                setTimeout(runNextTest, 1000); // Wait 1 second between tests
+             }
+          };
+
+          const handleError = (error) => {
+             if (!testCompleted) {
+                testCompleted = true;
+                clearTimeout(testTimeoutId);
+                console.error(`❌ Test ${testName} reported error: ${error.message || error}`);
+                 // Check if it already failed due to console.error override or timeout
+                if (!testState.results.find(r => r.name === testName && r.status === 'failed')) {
+                   testState.failed++;
+                   testState.pending--;
+                   testState.results.push({ name: testName, status: 'failed', error: error.message || error });
+                }
+                updateUI();
+                testIndex++;
+                setTimeout(runNextTest, 1000); // Still move to next test
+             }
+          };
+
+          // Modify the test execution slightly. We assume tests might be async
+          // or might rely on the console.log/error overrides to determine success.
+          // We'll mainly rely on the timeout and the console overrides for completion detection.
+          // The original structure of applying the test and waiting 5s is prone to race conditions.
+
+          // Execute the test
+          BrowserToolsTest[testName]();
+
+          // Set a shorter timeout to assume success if no errors occurred and the main timeout didn't hit.
+          // This is a fallback mechanism. Ideally tests would signal completion explicitly.
+           setTimeout(() => {
+               if (!testCompleted) {
+                  // If no console errors were logged for this test and timeout didn't occur, assume success.
+                  if (!testState.results.find(r => r.name === testName && r.status === 'failed')) {
+                     handleSuccess();
+                  }
+               }
+           }, 6000); // Shorter timeout (e.g., 6s) to assume success if no errors logged
+
+        } catch (error) {
+           // Catch immediate synchronous errors during test setup/call
+           if (!testCompleted) {
+              testCompleted = true;
+              clearTimeout(testTimeoutId);
+              console.error(`❌ Test ${testName} failed immediately with error: ${error.message}`);
+              if (!testState.results.find(r => r.name === testName && r.status === 'failed')) {
+                 testState.failed++;
+                 testState.pending--;
+                 testState.results.push({ name: testName, status: 'failed', error: error.message });
+              }
+              updateUI();
+              testIndex++;
+              setTimeout(runNextTest, 1000);
+           }
+        }
+      };
+
+      // Start the first test
+      runNextTest();
+    };
+
+    // --- Test Initialization ---
+    console.log('Initializing automated tests...');
+
+    // Check if BrowserToolsTest is defined (it should be, as it's in the script above)
+    if (typeof BrowserToolsTest !== 'undefined') {
+      console.log('✅ Test functions found.');
+      console.log('Tests will start in 3 seconds...');
+
+      // Start tests after a short delay
+      setTimeout(() => {
+        // Clear the initial message
+        resultsDiv.textContent = '';
+        runTestSequence();
+      }, 3000);
+    } else {
+       console.error('❌ CRITICAL: BrowserToolsTest object not found! Cannot run tests.');
+       document.getElementById('status').className = 'status error';
+       document.getElementById('status').textContent = 'Failed to initialize tests!';
+    }
+
+    // Initialize UI
+    updateUI();
+
+    // Listen for messages from parent window (keep for potential future use)
+    window.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'run-tests') {
+        console.log('Received run-tests command from parent');
+
+        if (window.BrowserToolsTest) {
+          // Clear previous results before running again
+          resultsDiv.textContent = '';
+          testState.success = 0;
+          testState.failed = 0;
+          testState.pending = testState.total;
+          testState.currentTest = 0;
+          testState.results = [];
+          updateUI();
+          runTestSequence();
+        }
+      }
+    });
+  </script>
+</body>
+</html>

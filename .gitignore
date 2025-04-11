@@ -1,4 +1,6 @@
+# Ignore the noise, heed the signal.
 node_modules
 dist
 .port
 .DS_Store
+firefox-extension/firefox-test-profile/*

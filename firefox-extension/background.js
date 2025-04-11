@@ -1,63 +1,232 @@
 // background.js - Firefox compatible version
 
-// Load the compatibility layer
-// Note: In Firefox, we need to ensure this is properly loaded
-if (typeof browserAPI === 'undefined') {
-  try {
-    importScripts('browser-compat.js');
-  } catch (e) {
-    console.error("Failed to import browser-compat.js:", e);
-  }
-}
+// Compatibility layer is now loaded via manifest.json, no need for importScripts
 
 // Track URLs for each tab
 const tabUrls = new Map();
 
-// Listen for messages from the devtools panel
+// Store injected script status per tab
+const injectedTabs = new Set();
+
+// Function to inject the console proxy content script
+async function injectContentScript(tabId) {
+  if (injectedTabs.has(tabId)) {
+    // console.log(`Background: Content script already injected in tab ${tabId}`);
+    return; // Already injected
+  }
+  try {
+    console.log(`Background: Attempting to inject console-proxy.js code directly into tab ${tabId} using tabs.executeScript`);
+    console.log(`Background: Attempting to inject console-proxy.js code directly into tab ${tabId}`);
+    // Injecting the code content directly using scripting.executeScript with 'func'
+    await browser.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // --- Start of console-proxy.js code ---
+        // NOTE: This code is duplicated here from console-proxy.js
+        // Any changes there need to be reflected here.
+
+        // Avoid re-injecting if already present
+        if (window.hasBrowserToolsConsoleProxy) {
+          console.log("[BrowserTools MCP] Console proxy already injected.");
+          return;
+        }
+        window.hasBrowserToolsConsoleProxy = true; // Set flag
+
+        console.log("[BrowserTools MCP] Initializing console proxy content script (injected code).");
+
+        const originalConsole = {
+          log: console.log,
+          warn: console.warn,
+          error: console.error,
+          info: console.info,
+          debug: console.debug,
+        };
+
+        let isProxyLogging = false;
+
+        function serializeArgs(args) {
+            const serialized = [];
+            for (const arg of args) {
+                try {
+                    if (arg instanceof Error) {
+                         serialized.push({ type: 'error', message: arg.message, stack: arg.stack });
+                    } else if (arg instanceof Node) {
+                         serialized.push({ type: 'domnode', outerHTML: arg.outerHTML.substring(0, 200) + (arg.outerHTML.length > 200 ? '...' : '') });
+                    } else if (typeof arg === 'object' && arg !== null) {
+                         // Basic stringify, handle potential errors
+                         try {
+                            serialized.push(JSON.stringify(arg));
+                         } catch (stringifyError) {
+                            serialized.push(`[Unserializable Object: ${stringifyError.message}]`);
+                         }
+                    } else {
+                         serialized.push(arg);
+                    }
+                } catch (e) {
+                    serialized.push(`[Serialization Error: ${e.message}]`);
+                }
+            }
+            return serialized;
+        }
+
+        Object.keys(originalConsole).forEach(level => {
+          console[level] = function(...args) {
+            originalConsole[level].apply(console, args);
+            if (isProxyLogging) return;
+            try {
+                isProxyLogging = true;
+                const messagePayload = {
+                    type: "CONSOLE_LOG_CAPTURED",
+                    payload: {
+                        level: level,
+                        args: serializeArgs(args),
+                        timestamp: new Date().toISOString(),
+                        url: window.location.href
+                    }
+                };
+                const api = typeof browser !== 'undefined' ? browser : null; // Firefox uses 'browser'
+                if (api && api.runtime && api.runtime.sendMessage) {
+                    api.runtime.sendMessage(messagePayload)
+                        .catch(err => {
+                            originalConsole.error('[BrowserTools MCP] Error sending console log to background:', err);
+                        })
+                        .finally(() => {
+                            isProxyLogging = false;
+                        });
+                } else {
+                     originalConsole.error('[BrowserTools MCP] Extension API not available to send console log.');
+                     isProxyLogging = false;
+                }
+            } catch (e) {
+                originalConsole.error('[BrowserTools MCP] Error in console proxy:', e);
+                isProxyLogging = false;
+            }
+          };
+        });
+        console.log("[BrowserTools MCP] Initialization check: Console logging should be active now (injected code).");
+        console.log("[BrowserTools MCP] Console proxy script loaded and active (injected code).");
+        // --- End of console-proxy.js code ---
+      }
+    });
+    injectedTabs.add(tabId);
+    console.log(`Background: Successfully injected console-proxy.js into tab ${tabId}`);
+  } catch (err) {
+    console.error(`Background: Failed to inject content script into tab ${tabId}: ${err}`);
+    // Common reasons: No permission for the page (e.g., about: pages, AMO), tab closed.
+  }
+}
+
+// Listen for DevTools opening (approximated by panel creation message or first message from panel)
+// Keep track of tabs where DevTools might be open
+const devToolsTabs = new Set();
+
+// Listen for messages from the devtools panel or other scripts
 browserAPI.runtime.onMessage.addListener((message, sender) => {
+  const tabId = message.tabId || sender.tab?.id; // Get tabId preferably from message, fallback to sender
+
+  // Allow settings request without tabId
+  if (!tabId && message.type !== "GET_SETTINGS") {
+      console.error("Background: Received message without identifiable tabId:", message);
+      return Promise.resolve({ success: false, error: "Missing tabId" });
+  }
+
+  console.log(`Background: Received message type '${message.type}' for tab ${tabId || 'N/A'} from ${sender.url || 'background'}`);
+
+  // If it's the first message from a panel script, assume DevTools opened for that tab
+  if (sender.url && sender.url.endsWith('panel.html') && tabId && !devToolsTabs.has(tabId)) {
+      console.log(`Background: Detected DevTools potentially opened for tab ${tabId}. Injecting content script.`);
+      devToolsTabs.add(tabId);
+      injectContentScript(tabId);
+  }
+  
+  // Handle captured console logs from content script
+  if (message.type === "CONSOLE_LOG_CAPTURED") {
+    console.log(`Background: Received console log from content script for tab ${tabId}:`, message.payload.level);
+    
+    // Log more details to help with debugging
+    console.log(`Background: Console log details:`, {
+        messageType: message.type,
+        level: message.payload.level,
+        args: message.payload.args,
+        tabId: tabId
+    });
+    
+    // Forward the captured log using runtime.sendMessage instead of tabs.sendMessage
+    // This will reach the DevTools panel since it's using runtime.onMessage.addListener
+    if (tabId) {
+        browser.runtime.sendMessage({
+            type: "FORWARDED_CONSOLE_LOG",
+            payload: message.payload,
+            tabId: tabId  // Include tabId so panel knows which tab generated the log
+        }).catch(err => {
+            console.error(`Background: Error forwarding console log: ${err.message}`);
+        });
+    } else {
+        console.error("Background: Cannot forward console log, missing tabId.");
+    }
+    
+    return Promise.resolve({ success: true }); // Acknowledge message
+  }
+
   // Handle URL requests
-  if (message.type === "GET_CURRENT_URL" && message.tabId) {
-    return getCurrentTabUrl(message.tabId)
+  if (message.type === "GET_CURRENT_URL") {
+    return getCurrentTabUrl(tabId)
       .then(url => ({ success: true, url: url }))
       .catch(error => ({ success: false, error: error.message }));
   }
 
   // Handle explicit request to update the server with the URL
-  if (message.type === "UPDATE_SERVER_URL" && message.tabId && message.url) {
+  if (message.type === "UPDATE_SERVER_URL" && message.url) {
     console.log(
-      `Background: Received request to update server with URL for tab ${message.tabId}: ${message.url}`
+      `Background: Received request to update server with URL for tab ${tabId}: ${message.url}`
     );
-    
+
     return updateServerWithUrl(
-      message.tabId, 
-      message.url, 
+      tabId,
+      message.url,
       message.source || "explicit_update"
     )
       .then(() => ({ success: true }))
-      .catch(error => ({ 
-        success: false, 
-        error: error.message 
+      .catch(error => ({
+        success: false,
+        error: error.message
       }));
   }
 
   // Handle screenshot capture requests
-  if (message.type === "CAPTURE_SCREENSHOT" && message.tabId) {
-    return handleScreenshotRequest(message);
+  if (message.type === "CAPTURE_SCREENSHOT") {
+    // Pass tabId to the handler
+    return handleScreenshotRequest({ ...message, tabId });
   }
 
   // Handle WebSocket connection notifications
   if (message.type === "WEBSOCKET_CONNECTED") {
-    console.log(`WebSocket connected to ${message.serverHost}:${message.serverPort}`);
+    console.log(`Background: WebSocket connected confirmation from devtools for ${message.serverHost}:${message.serverPort}`);
     return Promise.resolve({ success: true });
   }
 
-  return false; // Not handled
+  // Handle settings request (added)
+  if (message.type === "GET_SETTINGS") {
+     // Assuming loadSettings exists and returns settings
+     // Replace with actual settings loading logic if needed
+     return browserAPI.storage.local.get(["browserConnectorSettings"])
+             .then(result => ({ success: true, settings: result.browserConnectorSettings }))
+             .catch(error => ({ success: false, error: error.message }));
+  }
+
+  console.warn(`Background: Unhandled message type: ${message.type}`);
+  return Promise.resolve({ success: false, error: `Unhandled message type: ${message.type}` });
 });
 
 /**
  * Handle screenshot capture requests
  */
 async function handleScreenshotRequest(message) {
+  const tabId = message.tabId;
+  if (!tabId) {
+     console.error("Cannot capture screenshot: Missing tabId");
+     return { success: false, error: "Missing tabId for screenshot request" };
+  }
   try {
     // First get the server settings
     const result = await browserAPI.storage.local.get(["browserConnectorSettings"]);
@@ -93,21 +262,31 @@ async function handleScreenshotRequest(message) {
  */
 async function validateServerIdentity(host, port) {
   try {
+    console.log(`Validating server identity at ${host}:${port}`);
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // Increased timeout to 10s
+
+    console.log(`Sending fetch request to http://${host}:${port}/.identity`);
     const response = await fetch(`http://${host}:${port}/.identity`, {
-      signal: controller.signal
+      signal: controller.signal,
+      mode: 'cors', // Add CORS mode
+      headers: {
+        'Accept': 'application/json'
+      }
     });
-    
+
     clearTimeout(timeoutId);
-    
+
+    console.log(`Server response status: ${response.status}`);
+
     if (!response.ok) {
       console.error(`Invalid server response: ${response.status}`);
       return false;
     }
 
     const identity = await response.json();
+    console.log("Server identity response:", identity);
 
     // Validate the server signature
     if (identity.signature !== "mcp-browser-connector-24x7") {
@@ -115,6 +294,7 @@ async function validateServerIdentity(host, port) {
       return false;
     }
 
+    console.log("Server validation successful");
     return true;
   } catch (error) {
     console.error("Error validating server identity:", error);
@@ -155,7 +335,7 @@ async function getCurrentTabUrl(tabId) {
         active: true,
         currentWindow: true
       });
-      
+
       if (tabs && tabs.length > 0 && tabs[0].url) {
         const activeUrl = tabs[0].url;
         console.log("Background: Got URL from active tab:", activeUrl);
@@ -181,34 +361,36 @@ async function getCurrentTabUrl(tabId) {
 async function updateServerWithUrl(tabId, url, source = "background_update") {
   try {
     console.log(`Updating server with URL for tab ${tabId} (source: ${source}): ${url}`);
-    
+
     // Get server settings
     const result = await browserAPI.storage.local.get(["browserConnectorSettings"]);
     const settings = result.browserConnectorSettings || {
       serverHost: "localhost",
       serverPort: 3025
     };
-    
+
     // Update our local cache
     tabUrls.set(tabId, url);
-    
+
     // Send to the server
     const response = await fetch(`http://${settings.serverHost}:${settings.serverPort}/current-url`, {
       method: "POST",
+      mode: 'cors', // Added CORS mode
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         url,
         tabId,
-        source
+        source,
+        timestamp: new Date().toISOString()
       })
     });
-    
+
     if (!response.ok) {
       throw new Error(`Server returned ${response.status}: ${response.statusText}`);
     }
-    
+
     return true;
   } catch (error) {
     console.error("Error updating server with URL:", error);
@@ -220,13 +402,11 @@ async function updateServerWithUrl(tabId, url, source = "background_update") {
  * Capture and send a screenshot to the server
  */
 async function captureAndSendScreenshot(message, settings) {
+  const tabId = message.tabId;
   try {
-    const tabId = message.tabId;
-    
     console.log(`Capturing screenshot for tab ${tabId}`);
-    
+
     // Capture the screenshot
-    // In Firefox we use browser.tabs.captureTab
     let screenshotDataUrl;
     try {
       screenshotDataUrl = await browserAPI.tabs.captureTab(tabId, { format: "png" });
@@ -237,117 +417,91 @@ async function captureAndSendScreenshot(message, settings) {
         error: `Failed to capture screenshot: ${captureError.message}`
       };
     }
-    
-    if (!screenshotDataUrl) {
-      return {
-        success: false,
-        error: "Screenshot capture returned empty data"
-      };
-    }
-    
-    console.log("Screenshot captured, sending to server");
-    
-    // Send to server
+
+    // Send the screenshot to the server
     const serverUrl = `http://${settings.serverHost}:${settings.serverPort}/screenshot`;
-    
-    // We need to convert the data URL to a binary blob
-    const base64Data = screenshotDataUrl.split(',')[1];
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: 'image/png' });
-    
-    // Create form data
+    console.log(`Sending screenshot to ${serverUrl}`);
+
+    // Using FormData to potentially handle large data better
     const formData = new FormData();
-    formData.append('screenshot', blob, 'screenshot.png');
-    formData.append('autoPaste', settings.allowAutoPaste ? 'true' : 'false');
-    
-    // Add optional screenshot path if specified
+    formData.append("tabId", tabId);
+    formData.append("data", screenshotDataUrl);
     if (settings.screenshotPath) {
-      formData.append('path', settings.screenshotPath);
+       formData.append("path", settings.screenshotPath);
     }
-    
-    // Send the screenshot
+
     const response = await fetch(serverUrl, {
       method: 'POST',
+      mode: 'cors', // Added CORS mode
       body: formData
+      // Note: Don't set Content-Type header when using FormData,
+      // the browser will set it correctly with the boundary.
     });
-    
+
     if (!response.ok) {
-      throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Server returned ${response.status}: ${errorText}`);
     }
-    
-    const responseData = await response.json();
-    
+
+    const result = await response.json();
+    console.log("Screenshot successfully sent to server:", result);
+
     return {
       success: true,
-      data: responseData
+      path: result.path,
+      filename: result.filename
     };
+
   } catch (error) {
     console.error("Error sending screenshot to server:", error);
     return {
       success: false,
-      error: `Failed to send screenshot to server: ${error.message}`
+      error: `Failed to send screenshot: ${error.message}`
     };
   }
 }
 
-// Set up listeners for tab changes
-if (isFirefox) {
-  // Firefox API
-  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // Track URL changes
-    if (changeInfo.url) {
-      console.log(`URL changed in tab ${tabId} to ${changeInfo.url}`);
-      tabUrls.set(tabId, changeInfo.url);
-      
-      // Send URL update to server
-      updateServerWithUrl(tabId, changeInfo.url, "tab_url_change")
-        .catch(error => console.error("Error updating server with URL:", error));
+// Tab update listeners
+browserAPI.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith('http')) {
+    console.log(`Tab ${tabId} updated to complete status: ${tab.url}`);
+    updateServerWithUrl(tabId, tab.url, "page_complete");
+  } else if (changeInfo.url) {
+    console.log(`Tab ${tabId} URL changed: ${changeInfo.url}`);
+    updateServerWithUrl(tabId, changeInfo.url, "tab_url_change");
+  }
+}, { properties: ["status", "url"] });
+
+browserAPI.tabs.onActivated.addListener((activeInfo) => {
+  console.log(`Tab activated: ${activeInfo.tabId}`);
+  browserAPI.tabs.get(activeInfo.tabId).then(tab => {
+    if (tab && tab.url) {
+      updateServerWithUrl(activeInfo.tabId, tab.url, "tab_activated");
     }
-    
-    // Check if this is a page refresh (status becoming "complete")
-    if (changeInfo.status === "complete") {
-      // Update URL in our cache
-      if (tab.url) {
-        tabUrls.set(tabId, tab.url);
-        
-        // Send URL update to server
-        updateServerWithUrl(tabId, tab.url, "page_complete")
-          .catch(error => console.error("Error updating server with URL:", error));
-      }
+  }).catch(err => console.error("Error getting activated tab:", err));
+});
+
+// Listen for webNavigation events to inject content script early/reliably
+browser.webNavigation.onCommitted.addListener((details) => {
+  // Inject if it's the main frame and a potentially valid URL scheme
+  if (details.frameId === 0) {
+    // Check if the URL is one we can inject into (avoid about:, moz-extension:, etc.)
+    if (details.url.startsWith('http') || details.url.startsWith('file')) {
+       console.log(`Background: Navigation committed in tab ${details.tabId} to ${details.url}. Attempting content script injection.`);
+       // Clear injection status on navigation before trying to inject (in case previous injection failed or script was removed)
+       // injectedTabs.delete(details.tabId); // Let injectContentScript handle the check
+       injectContentScript(details.tabId);
+    } else {
+       console.log(`Background: Skipping content script injection for non-injectable URL scheme: ${details.url}`);
     }
-  });
-  
-  // Listen for tab activation (switching between tabs)
-  browser.tabs.onActivated.addListener((activeInfo) => {
-    const tabId = activeInfo.tabId;
-    console.log(`Tab activated: ${tabId}`);
-    
-    // Get the URL of the newly activated tab
-    browser.tabs.get(tabId)
-      .then(tab => {
-        if (tab && tab.url) {
-          tabUrls.set(tabId, tab.url);
-          
-          // Update server with URL
-          return updateServerWithUrl(tabId, tab.url, "tab_activated");
-        }
-      })
-      .catch(error => console.error("Error processing activated tab:", error));
-  });
-} else {
-  // Chrome API (for compatibility)
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // Similar implementation as Firefox but with callbacks
-    // This would be expanded in a full implementation
-  });
-  
-  chrome.tabs.onActivated.addListener((activeInfo) => {
-    // Similar implementation as Firefox but with callbacks
-  });
-}
+  }
+});
+
+// Clean up injection status when a tab is closed
+browser.tabs.onRemoved.addListener((tabId) => {
+  console.log(`Background: Tab ${tabId} removed, cleaning up state.`);
+  injectedTabs.delete(tabId);
+  devToolsTabs.delete(tabId);
+});
 
 console.log("Background script initialized"); 
